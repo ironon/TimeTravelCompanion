@@ -10,7 +10,9 @@ import requests
 from elevenlabs.client import ElevenLabs
 from flask import Flask, request, jsonify
 from flask import Response, stream_with_context
-# Load the API key from the .env file
+import threading
+import time
+# Load the API key from the .env fileh
 
 def call_chatgpt(text, system_prompt=None):
     url = "https://api.openai.com/v1/chat/completions"
@@ -38,7 +40,7 @@ client = ElevenLabs(
   api_key=os.getenv("ELEVENLABS_API_KEY"),
 )
 
-
+input_path = './input/audio_input.wav'
 voice_id = 'Xb7hH8MSUJpSbSDYk0k2'
 
 voice_ids = {
@@ -176,6 +178,12 @@ def audio_to_text(file_object):
 
 app = Flask(__name__)
 
+def _receive_audio(character, id, file):
+    audio_bytes = file.read()
+    text = audio_to_text(BytesIO(audio_bytes))
+    response = call_chatgpt(text, system_prompt=system_prompts["david"])
+    text_to_voice(voice_ids["david"], response, f"{character}_{id}.mp3")
+    
 @app.route('/receive_audio/<character>/<id>', methods=['POST'])
 def receive_audio(character, id):
     if 'file' not in request.files:
@@ -185,11 +193,11 @@ def receive_audio(character, id):
     if file.filename == '':
         return jsonify({"error": "No file selected"}), 400
 
-    audio_bytes = file.read()
-    text = audio_to_text(BytesIO(audio_bytes))
-    response = call_chatgpt(text, system_prompt=system_prompts["david"])
-    text_to_voice(voice_ids["david"], response, f"{character}_{id}.mp3")
-    return jsonify({"transcription": text}), 200
+    if file:
+        _receive_audio(character, id, file)
+        return jsonify({"message": "Audio received and processed successfully"}), 200
+    
+    return jsonify({"transcription": "good one man"}), 200
 
 ## endpoint get_audio that allows users to get the output audio file. do not jsonify, return the file bytes directly
 @app.route('/get_audio/<character>/<id>', methods=['GET'])
@@ -212,6 +220,22 @@ def get_audio(character, id):
     else:
         return jsonify({"error": "File not found"}), 404
     
+def watch_audio_input():
+    
+    last_mtime = None
+    while True:
+        if os.path.exists(input_path):
+            mtime = os.path.getmtime(input_path)
+            if last_mtime is None:
+                last_mtime = mtime
+            elif mtime != last_mtime:
+                _receive_audio("david", "1", open(input_path, 'rb'))
+                last_mtime = mtime
+        time.sleep(0.5)
+
+watch_thread = threading.Thread(target=watch_audio_input, daemon=True)
+watch_thread.start()
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5004)
