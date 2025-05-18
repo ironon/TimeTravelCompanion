@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 import websockets
 import asyncio
 import json
+from waitress import serve
+import time
 import base64
 from io import BytesIO
 import requests
@@ -12,23 +14,41 @@ from flask import Flask, request, jsonify
 from flask import Response, stream_with_context
 import threading
 import time
+import datetime
+import sounddevice
+import soundfile
 # Load the API key from the .env fileh
 
-def call_chatgpt(text, system_prompt=None):
+responses = {
+    "david": []
+}
+
+def call_chatgpt(text, system_prompt=None, character=None):
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPEN_AI_API_KEY}",
         "Content-Type": "application/json"
     }
+
+    temp_array =  [
+            {"role": "system", "content": system_prompt},
+
+        ]
+    
+    ## add every entry in responses[character] to the temp_array
+    for i in responses[character]:
+        temp_array.append(i)
+    temp_array.append({"role": "user", "content": text})
+    responses[character].append({"role": "user", "content": text})
+
+    # print(temp_array)
     data = {
         "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
-        ]
+        "messages": temp_array
     }
     response = requests.post(url, headers=headers, json=data)
     if response.status_code == 200:
+        responses[character].append({"role": "assistant", "content": response.json()["choices"][0]["message"]["content"]})
         return response.json()["choices"][0]["message"]["content"]
     else:
         raise Exception(f"ChatGPT API call failed: {response.status_code}, {response.text}")
@@ -40,7 +60,7 @@ client = ElevenLabs(
   api_key=os.getenv("ELEVENLABS_API_KEY"),
 )
 
-input_path = './input/audio_input.wav'
+input_path = "C:\\Users\\david\\OneDrive\\Documents\\Unreal Projects\\TimeTravelCompanion\\Saved\\BouncedWavFiles\\audio_input.wav"
 voice_id = 'Xb7hH8MSUJpSbSDYk0k2'
 
 voice_ids = {
@@ -161,6 +181,10 @@ async def listen(websocket):
 
 def text_to_voice(voice_id, text, filename):
     asyncio.run(text_to_speech_ws_streaming(voice_ids["david"], model_id, text, filename))
+    data, samplerate = soundfile.read('./output/' + filename)
+    sounddevice.play(data, samplerate)
+    sounddevice.wait()
+
 
 
 def audio_to_text(file_object):
@@ -171,18 +195,29 @@ def audio_to_text(file_object):
         language_code="eng", # Language of the audio file. If set to None, the model will detect the language automatically.
         diarize=True, # Whether to annotate who is speaking
     )
+    print(text.text)
     return text.text
 
 
-
-
+global m_time
+last_mtime_real = 0
 app = Flask(__name__)
 
 def _receive_audio(character, id, file):
+    global last_mtime_real
+
+
+    last_mtime_real = time.time()
+
     audio_bytes = file.read()
+    print("A")
     text = audio_to_text(BytesIO(audio_bytes))
-    response = call_chatgpt(text, system_prompt=system_prompts["david"])
-    text_to_voice(voice_ids["david"], response, f"{character}_{id}.mp3")
+    print("B")
+    response = call_chatgpt(text, system_prompt=system_prompts[character], character=character)
+    print("C")
+    text_to_voice(voice_ids["david"], response, f"{character}_{id}.wav")
+    print("D")
+    print("finished!")
     
 @app.route('/receive_audio/<character>/<id>', methods=['POST'])
 def receive_audio(character, id):
@@ -202,7 +237,7 @@ def receive_audio(character, id):
 ## endpoint get_audio that allows users to get the output audio file. do not jsonify, return the file bytes directly
 @app.route('/get_audio/<character>/<id>', methods=['GET'])
 def get_audio(character, id):
-    filename = f"{character}_{id}.mp3"
+    filename = f"{character}_{id}.wav"
     filepath = f'./output/{filename}'
     if os.path.exists(filepath):
         def generate():
@@ -238,8 +273,6 @@ watch_thread.start()
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5004)
-
-
+    serve(app, listen='*:5004')
 
     
