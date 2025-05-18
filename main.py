@@ -28,7 +28,7 @@ def call_chatgpt(text, system_prompt=None, character=None):
     }
 
     temp_array =  [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt + "\n" + system_prompt_addon},
 
         ]
     
@@ -61,7 +61,7 @@ client = ElevenLabs(
   api_key=os.getenv("ELEVENLABS_API_KEY"),
 )
 
-input_path = "C:\\Users\\david\\OneDrive\\Documents\\Unreal Projects\\TimeTravelCompanion\\Saved\\BouncedWavFiles\\audio_input.wav"
+input_path = "C:\\Users\\david\\OneDrive\\Documents\\Unreal Projects\\TimeTravelCompanion\\Saved\\BouncedWavFiles\\"
 voice_id = 'Xb7hH8MSUJpSbSDYk0k2'
 
 voice_ids = {
@@ -76,6 +76,20 @@ voice_ids = {
 names = voice_ids.keys()
 responses = {name: [] for name in names}
 
+system_prompt_addon = """
+# Actions
+
+You have three abilities.
+
+*RUN AWAY*: Runs away from the current situation.
+*FOLLOW*: Follows the user.
+*ATTACK*: Attacks the user.
+
+At any point during the conversation, you can say any one of these actions, and the character you are playing will do it.
+To use it, you must say exactly "*RUN AWAY*" or "*FOLLOW*" or "*ATTACK*". Do not omit the asterisks, or it will not work. 
+You have no other abilities.
+
+"""
 system_prompts = {
     "david": """
 # Personality
@@ -358,9 +372,18 @@ async def listen(websocket):
         except websockets.exceptions.ConnectionClosed:
             print("Connection closed")
             break
-
+def filter_actions_out(text):
+    """
+    Filters out the actions from the text.
+    """
+    actions = ["*RUN AWAY*", "*FOLLOW*", "*ATTACK*"]
+    for action in actions:
+        text = text.replace(action, "")
+    return text
+    
 def text_to_voice(voice_id, text, filename):
-    asyncio.run(text_to_speech_ws_streaming(voice_id, model_id, text, filename))
+    n_text = filter_actions_out(text)
+    asyncio.run(text_to_speech_ws_streaming(voice_id, model_id, n_text, filename))
     data, samplerate = soundfile.read('./output/' + filename)
     sounddevice.play(data, samplerate)
     sounddevice.wait()
@@ -381,23 +404,29 @@ def audio_to_text(file_object):
 
 global m_time
 last_mtime_real = 0
+file_ready = {
+    ## david: False,
+}
+last_text_said = {
+
+}
 app = Flask(__name__)
 
 def _receive_audio(character, id, file):
     global last_mtime_real
-
+    file_ready[character] = True
 
     last_mtime_real = time.time()
 
     audio_bytes = file.read()
-    print("A")
+   
     text = audio_to_text(BytesIO(audio_bytes))
-    print("B")
+ 
     response = call_chatgpt(text, system_prompt=system_prompts[character], character=character)
-    print("C")
+    print("finished!A")
     text_to_voice(voice_ids[character], response, f"{character}_{id}.wav")
-    print("D")
-    print("finished!")
+    return response
+   
     
 @app.route('/receive_audio/<character>/<id>', methods=['POST'])
 def receive_audio(character, id):
@@ -435,21 +464,28 @@ def get_audio(character, id):
     else:
         return jsonify({"error": "File not found"}), 404
     
-def watch_audio_input():
-    
-    last_mtime = None
-    while True:
-        if os.path.exists(input_path):
-            mtime = os.path.getmtime(input_path)
-            if last_mtime is None:
-                last_mtime = mtime
-            elif mtime != last_mtime:
-                _receive_audio("david", "1", open(input_path, 'rb'))
-                last_mtime = mtime
-        time.sleep(0.5)
+@app.route("/wait_audio/<character>/<id>", methods=["GET"])
+def wait_audio(character, id):
+    global file_ready
+    text = _receive_audio(character, id, open(input_path + character + ".wav", 'rb'))
+   
+    return text, 200
 
-watch_thread = threading.Thread(target=watch_audio_input, daemon=True)
-watch_thread.start()
+# def watch_audio_input():
+    
+#     last_mtime = None
+#     while True:
+#         if os.path.exists(input_path):
+#             mtime = os.path.getmtime(input_path)
+#             if last_mtime is None:
+#                 last_mtime = mtime
+#             elif mtime != last_mtime:
+                
+#                 last_mtime = mtime
+#         time.sleep(0.5)
+
+# watch_thread = threading.Thread(target=watch_audio_input, daemon=True)
+# watch_thread.start()
 
 
 if __name__ == '__main__':
