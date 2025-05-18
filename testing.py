@@ -8,8 +8,8 @@ import websockets
 
 
 def send_david_request():
-    url = "http://127.0.0.1:5004/receive_audio/david/3"
-    file_path = "./output/sigma.mp3"
+    url = "http://127.0.0.1:5004/receive_audio/vex/2"
+    file_path = "./output/input.wav"
 
     with open(file_path, "rb") as f:
         files = {"file": ("test.mp3", f, "audio/mpeg")}
